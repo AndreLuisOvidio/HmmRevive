@@ -300,3 +300,39 @@
 20	Killer J.	14	The Mischievous Gadgeteer
 20	Killer J.	15	J. Frost
 20	Killer J.	16	Little Pope J.
+101	Stingray W	0	Original
+101	Stingray W	1	Underhanded Star (Rusted)
+101	Stingray W	2	Mobile Suit (Purple)
+101	Stingray W	3	Stingarang (Purple)
+101	Stingray W	4	Stingarang (Green)
+101	Stingray W	5	Scary Machines and Nice Videos
+101	Stingray W	6	More Machines and Videos
+101	Stingray W	7	My Name is Stingray
+101	Stingray W	8	Underhanded Star (HMM)
+101	Stingray W	9	Mobile Suit (Red)
+101	Stingray W	10	Veteran
+101	Stingray W	11	Sunset Eagle
+101	Stingray W	12	Metal Clash Winners #1
+101	Stingray W	13	Sharkray (Holo)
+101	Stingray W	14	Mr. Sawtooth
+101	Stingray W	15	Manta Ray
+101	Stingray W	16	Sharkray (Steel)
+101	Stingray W	17	Cryotech
+102	Stingray W CD	0	Original
+102	Stingray W CD	1	Underhanded Star (Rusted)
+102	Stingray W CD	2	Mobile Suit (Purple)
+102	Stingray W CD	3	Stingarang (Purple)
+102	Stingray W CD	4	Stingarang (Green)
+102	Stingray W CD	5	Scary Machines and Nice Videos
+102	Stingray W CD	6	More Machines and Videos
+102	Stingray W CD	7	My Name is Stingray
+102	Stingray W CD	8	Underhanded Star (HMM)
+102	Stingray W CD	9	Mobile Suit (Red)
+102	Stingray W CD	10	Veteran
+102	Stingray W CD	11	Sunset Eagle
+102	Stingray W CD	12	Metal Clash Winners #1
+102	Stingray W CD	13	Sharkray (Holo)
+102	Stingray W CD	14	Mr. Sawtooth
+102	Stingray W CD	15	Manta Ray
+102	Stingray W CD	16	Sharkray (Steel)
+102	Stingray W CD	17	Cryotech

@@ -26,6 +26,9 @@ namespace HmmRevive
         private static readonly Dictionary<string, string> ChoiceByName = new Dictionary<string, string>();
         private static readonly Dictionary<string, string> SkinByName = new Dictionary<string, string>();
         private static readonly Dictionary<string, bool> RedByName = new Dictionary<string, bool>();
+        // Mod cars (Variants.cs) picked at launch, by player or bot name: car selection gives them the base car, CarSwap
+        // then puts the mod car on.
+        private static readonly Dictionary<string, int> VariantByName = new Dictionary<string, int>();
         private static readonly System.Random Rng = new System.Random();
         private static bool _listed;
 
@@ -86,6 +89,13 @@ namespace HmmRevive
             authManager.GetType().GetField("_nextPlayerOnRedTeam", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(authManager, red);
         }
 
+        /// <summary>Mod car (Variants.cs) the player or bot was given at launch, or -1.</summary>
+        public static int VariantWish(PlayerData player)
+        {
+            int id;
+            return player != null && VariantByName.TryGetValue(player.Name, out id) ? id : -1;
+        }
+
         /// <summary>Skin the player asked for at login (a number, a name or "random"), or null.</summary>
         public static string SkinWish(PlayerData player)
         {
@@ -103,7 +113,8 @@ namespace HmmRevive
             if (!_listed)
             {
                 _listed = true;
-                Log.Info("cars: " + string.Join(", ", characters.OrderBy(c => c.Key).Select(c => c.Key + "=" + Names(c.Value)).ToArray()));
+                Log.Info("cars: " + string.Join(", ", characters.OrderBy(c => c.Key).Select(c => c.Key + "=" + Names(c.Value)).ToArray())
+                    + "; mod cars: " + string.Join(", ", Variants.All.Select(v => v.Id + "=" + v.Name).ToArray()));
                 DumpSkins(characters);
             }
             if (player.IsBot) return BotCar(player, characters, fallback);
@@ -111,6 +122,13 @@ namespace HmmRevive
             Emotes.ApplyToPlayer(player);
             string want;
             if (!ChoiceByName.TryGetValue(player.Name, out want)) return fallback;
+            int variant = Variants.Resolve(want);
+            if (variant >= 0 && characters.ContainsKey(Variants.Base(variant)))
+            {
+                VariantByName[player.Name] = variant;
+                Log.Info($"player {player.Name} wants mod car {variant} {Variants.Get(variant).Name}: base car {Variants.Base(variant)} until the countdown");
+                return Variants.Base(variant);
+            }
             int id = Resolve(want, characters);
             if (id >= 0) return id;
             Log.Error($"unknown car '{want}' for {player.Name}; using slot default {fallback}");
@@ -127,6 +145,14 @@ namespace HmmRevive
             int index = mates.IndexOf(bot);
             string want = list.Length == 1 && IsRandom(list[0]) ? list[0] : index >= 0 && index < list.Length ? list[index] : null;
             if (want == null || want.Equals("default", StringComparison.OrdinalIgnoreCase)) return fallback;
+            int variant = IsRandom(want) ? -1 : Variants.Resolve(want);
+            if (variant >= 0 && characters.ContainsKey(Variants.Base(variant)))
+            {
+                VariantByName[bot.Name] = variant;
+                BotPicks[bot] = Variants.Base(variant);
+                Log.Info($"bot {bot.Name} ({bot.Team} #{index + 1}) gets mod car {variant} {Variants.Get(variant).Name}");
+                return Variants.Base(variant);
+            }
             int id = IsRandom(want) ? RandomBotCar(bot, characters) : Resolve(want, characters);
             if (id < 0)
             {
@@ -248,6 +274,14 @@ namespace HmmRevive
                     Log.Info($"skins {c.Key} {DisplayName(c.Value)}: " + string.Join(", ", skins.Select((s, i) =>
                         $"{i}={SkinName(s)} [{s.Name} {Prefab(s)?.SkinPrefabName} {Prefab(s)?.Tier}]").ToArray()) + (missing > 0 ? $" (+{missing} without a model)" : ""));
                     for (int i = 0; i < skins.Count; i++) lines.Add($"{c.Key}\t{DisplayName(c.Value)}\t{i}\t{SkinName(skins[i]).Replace('’', '\'')}"); // ASCII for the Windows console
+                }
+                // Mod cars wear their base car's skins.
+                foreach (Variants.Variant v in Variants.All)
+                {
+                    IItemType baseCar;
+                    if (!characters.TryGetValue(v.Base, out baseCar)) continue;
+                    List<IItemType> skins = SkinsOf(baseCar.Id);
+                    for (int i = 0; i < skins.Count; i++) lines.Add($"{v.Id}\t{v.Name}\t{i}\t{SkinName(skins[i]).Replace('’', '\'')}");
                 }
                 File.WriteAllText(Path.Combine(Path.GetDirectoryName(Application.dataPath) ?? ".", "hmmrevive-skins.txt"),
                     string.Join("\r\n", lines.ToArray()) + "\r\n");

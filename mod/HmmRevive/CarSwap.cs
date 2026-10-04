@@ -58,14 +58,17 @@ namespace HmmRevive
         {
             public int Car;   // character id
             public Guid Skin; // skin item id, Guid.Empty = the car's default skin
+            public bool Start; // a mod car picked at launch (Variants.cs): put on at the first countdown, without a chat notice
 
-            public Want(int car, Guid skin) { Car = car; Skin = skin; }
+            public Want(int car, Guid skin) { Car = car; Skin = skin; Start = false; }
         }
 
         // Server: car object id -> wanted car and skin, applied at the next safe moment.
         private static readonly Dictionary<int, Want> Pending = new Dictionary<int, Want>();
         // Client: swaps received from the server (car object id -> car and skin), applied from Update (outside the network callback).
         private static readonly Queue<KeyValuePair<int, Want>> ClientQueue = new Queue<KeyValuePair<int, Want>>();
+        // Server: cars already checked for a mod car picked at launch (car object ids).
+        private static readonly HashSet<int> StartChecked = new HashSet<int>();
         // Server: skin wishes typed with /skin this match, by player name (they replace the launcher's --hmmrevive-skin).
         private static readonly Dictionary<string, string> SkinWishes = new Dictionary<string, string>();
         // Skin models being loaded mid-match (asset names).
@@ -94,6 +97,7 @@ namespace HmmRevive
             PreloadWaiting.Clear();
             Pending.Clear();
             ChaosSeen.Clear();
+            StartChecked.Clear();
             ClientQueue.Clear();
             SkinWishes.Clear();
             _lastPhase = (BombScoreboardState)(-1);
@@ -234,9 +238,12 @@ namespace HmmRevive
             var infos = CharacterInfos();
             var cars = items.Where(c => infos.ContainsKey(c.Key)).OrderBy(c => CarChoice.DisplayName(c.Value))
                 .Select(c => c.Key + " " + CarChoice.DisplayName(c.Value)).ToArray();
-            Say(chat, player, $"You drive [ffcc00]{CarName(player.CharacterId)}[-]. Type /car NAME or /car NUMBER (or /car random) to swap when you next die or between rounds:");
+            Say(chat, player, $"You drive [ffcc00]{CarName(Variants.Current(player))}[-]. Type /car NAME or /car NUMBER (or /car random) to swap when you next die or between rounds:");
             for (int i = 0; i < cars.Length; i += 6)
                 Say(chat, player, string.Join(", ", cars.Skip(i).Take(6).ToArray()));
+            string[] variants = Variants.All.Where(v => infos.ContainsKey(v.Base) && infos.ContainsKey(v.BoostFrom))
+                .Select(v => $"{v.Id} {v.Name} ({CarName(v.Base)} with {CarName(v.BoostFrom)}'s boost{(v.Cooldown > 0f ? $", {v.Cooldown}s cooldowns" : "")})").ToArray();
+            if (variants.Length > 0) Say(chat, player, "Mod cars: " + string.Join(", ", variants));
             Say(chat, player, "Skins: /skins lists your car's skins, /skin NUMBER (or /skin random) changes it.");
         }
 
@@ -244,14 +251,14 @@ namespace HmmRevive
         private static int NextCar(PlayerData player)
         {
             Want want;
-            return Pending.TryGetValue(player.PlayerCarId, out want) ? want.Car : player.CharacterId;
+            return Pending.TryGetValue(player.PlayerCarId, out want) ? want.Car : Variants.Current(player);
         }
 
         private static void ListSkins(ChatService chat, PlayerData player)
         {
             int car = NextCar(player);
-            List<IItemType> skins = CarChoice.SkinsOf(GameHubBehaviour.Hub.InventoryColletion.GetCharacterGuidId(car));
-            Guid current = car == player.CharacterId ? SkinOrDefault(car, player.Customizations.GetGuidBySlot(PlayerCustomizationSlot.Skin)) : Guid.Empty;
+            List<IItemType> skins = CarChoice.SkinsOf(GameHubBehaviour.Hub.InventoryColletion.GetCharacterGuidId(Variants.Base(car)));
+            Guid current = car == Variants.Current(player) ? SkinOrDefault(car, player.Customizations.GetGuidBySlot(PlayerCustomizationSlot.Skin)) : Guid.Empty;
             var names = skins.Select((s, i) =>
             {
                 bool worn = SkinOrDefault(car, s.Id) == current;
@@ -265,7 +272,7 @@ namespace HmmRevive
         private static void RequestSkin(ChatService chat, PlayerData player, string wish)
         {
             int car = NextCar(player);
-            IItemType skin = CarChoice.ResolveSkin(wish, GameHubBehaviour.Hub.InventoryColletion.GetCharacterGuidId(car));
+            IItemType skin = CarChoice.ResolveSkin(wish, GameHubBehaviour.Hub.InventoryColletion.GetCharacterGuidId(Variants.Base(car)));
             if (skin == null)
             {
                 Say(chat, player, $"No skin of {CarName(car)} matches '{wish}'. Type /skins for the list.");
@@ -273,7 +280,7 @@ namespace HmmRevive
             }
             SkinWishes[player.Name] = wish;
             Guid id = SkinOrDefault(car, skin.Id);
-            if (car == player.CharacterId && id == SkinOrDefault(car, player.Customizations.GetGuidBySlot(PlayerCustomizationSlot.Skin)))
+            if (car == Variants.Current(player) && id == SkinOrDefault(car, player.Customizations.GetGuidBySlot(PlayerCustomizationSlot.Skin)))
             {
                 Pending.Remove(player.PlayerCarId);
                 Say(chat, player, $"You already wear {CarChoice.SkinName(skin)}.");
@@ -287,7 +294,7 @@ namespace HmmRevive
         // Guid.Empty for the car's default skin (what the game itself uses for bots).
         private static Guid SkinOrDefault(int car, Guid skin)
         {
-            IItemType def = GameHubBehaviour.Hub.InventoryColletion.GetDefaultSkin(GameHubBehaviour.Hub.InventoryColletion.GetCharacterGuidId(car));
+            IItemType def = GameHubBehaviour.Hub.InventoryColletion.GetDefaultSkin(GameHubBehaviour.Hub.InventoryColletion.GetCharacterGuidId(Variants.Base(car)));
             return def != null && def.Id == skin ? Guid.Empty : skin;
         }
 
@@ -298,7 +305,7 @@ namespace HmmRevive
             string wish;
             if (!SkinWishes.TryGetValue(player.Name, out wish)) wish = CarChoice.SkinWish(player);
             if (wish == null) return Guid.Empty;
-            IItemType skin = CarChoice.ResolveSkin(wish, GameHubBehaviour.Hub.InventoryColletion.GetCharacterGuidId(car));
+            IItemType skin = CarChoice.ResolveSkin(wish, GameHubBehaviour.Hub.InventoryColletion.GetCharacterGuidId(Variants.Base(car)));
             return skin == null ? Guid.Empty : SkinOrDefault(car, skin.Id);
         }
 
@@ -308,7 +315,7 @@ namespace HmmRevive
             Pending[player.PlayerCarId] = want;
             if (want.Skin == Guid.Empty) return;
             HMMHub hub = GameHubBehaviour.Hub;
-            string asset = SkinAssetName(hub.InventoryColletion.GetCharacterGuidId(want.Car), want.Skin);
+            string asset = SkinAssetName(hub.InventoryColletion.GetCharacterGuidId(Variants.Base(want.Car)), want.Skin);
             if (!SkinReady(asset))
                 hub.Chat.DispatchReliable(hub.AddressGroups.GetGroup(0)).ClientReceiveMessage(false, $"{Marker}load:{asset}", 0);
         }
@@ -318,13 +325,19 @@ namespace HmmRevive
             var infos = CharacterInfos();
             var items = GameHubBehaviour.Hub.InventoryColletion.AllCharactersByCharacterId;
             var swappable = items.Where(c => infos.ContainsKey(c.Key)).ToDictionary(c => c.Key, c => c.Value);
-            int id = want.Equals("random", StringComparison.OrdinalIgnoreCase) ? RandomCar(player.CharacterId) : CarChoice.Resolve(want, swappable);
+            int id = want.Equals("random", StringComparison.OrdinalIgnoreCase) ? RandomCar(player.CharacterId) : Variants.Resolve(want);
+            if (id < 0) id = CarChoice.Resolve(want, swappable);
             if (id < 0)
             {
                 Say(chat, player, $"No car matches '{want}'. Type /cars for the list.");
                 return;
             }
-            if (id == player.CharacterId)
+            if (Variants.Get(id) != null && Variants.Info(id, infos) == null)
+            {
+                Say(chat, player, $"{CarName(id)} isn't available in this match.");
+                return;
+            }
+            if (id == Variants.Current(player))
             {
                 Pending.Remove(player.PlayerCarId);
                 Say(chat, player, $"You already drive {CarName(id)}.");
@@ -343,6 +356,8 @@ namespace HmmRevive
 
         private static string CarName(int charId)
         {
+            Variants.Variant variant = Variants.Get(charId);
+            if (variant != null) return variant.Name;
             IItemType item;
             return GameHubBehaviour.Hub.InventoryColletion.AllCharactersByCharacterId.TryGetValue(charId, out item) ? CarChoice.DisplayName(item) : "#" + charId;
         }
@@ -416,6 +431,7 @@ namespace HmmRevive
             BombScoreboardState phase = hub.BombManager.CurrentBombGameState;
             if (Entry.Chaos) Chaos(hub, phase);
             _lastPhase = phase;
+            QueueStartVariants(hub);
             if (Pending.Count == 0) return;
             int now = hub.GameTime.GetPlaybackTime();
             foreach (var request in Pending.ToArray())
@@ -433,18 +449,34 @@ namespace HmmRevive
                 bool dead = spawn.State == SpawnStateKind.Unspawned && now - spawn.UnspawnTime >= 500 && spawn.GetDeathTimeRemainingMillis() > 500;
                 // Between rounds: every car sits locked at its start position until the countdown ends.
                 bool betweenRounds = phase == BombScoreboardState.Shop && spawn.State == SpawnStateKind.Spawned;
-                if (!dead && !betweenRounds) continue;
+                // A launch pick also goes on during the match's first countdown (Warmup), where the cars stand locked too.
+                bool firstCountdown = request.Value.Start && phase == BombScoreboardState.Warmup && spawn.State == SpawnStateKind.Spawned;
+                if (!dead && !betweenRounds && !firstCountdown) continue;
                 Want want = request.Value;
-                if (want.Skin != Guid.Empty && !SkinReady(SkinAssetName(hub.InventoryColletion.GetCharacterGuidId(want.Car), want.Skin))) continue;
+                if (want.Skin != Guid.Empty && !SkinReady(SkinAssetName(hub.InventoryColletion.GetCharacterGuidId(Variants.Base(want.Car)), want.Skin))) continue;
                 Pending.Remove(request.Key);
-                int fromCar = player.CharacterId;
+                int fromCar = Variants.Current(player);
                 string from = CarName(fromCar);
                 if (!Rebuild(player, want.Car, want.Skin)) continue;
                 if (fromCar != want.Car) ReorderGrid(hub, player.Team);
                 hub.Chat.DispatchReliable(hub.AddressGroups.GetGroup(0)).ClientReceiveMessage(false, $"{Marker}swap:{request.Key}:{want.Car}:{want.Skin}", 0);
-                if (player.IsBot) continue;
+                if (player.IsBot || want.Start) continue;
                 if (fromCar != want.Car) SayAll(hub.Chat, $"{player.Name} swapped {from} for [ffcc00]{CarName(want.Car)}[-]");
                 else Say(hub.Chat, player, $"Skin changed to [ffcc00]{SkinLabel(want.Skin)}[-].");
+            }
+        }
+
+        // Players and bots who picked a mod car at launch got its base car in car selection; queue the mod car itself.
+        private static void QueueStartVariants(HMMHub hub)
+        {
+            foreach (PlayerData p in hub.Players.PlayersAndBots)
+            {
+                if (p.CharacterInstance == null || !StartChecked.Add(p.PlayerCarId)) continue;
+                int variant = CarChoice.VariantWish(p);
+                if (variant < 0 || Variants.Current(p) == variant || Pending.ContainsKey(p.PlayerCarId)) continue;
+                if (Variants.Info(variant, CharacterInfos()) == null) continue; // logged
+                Log.Info($"VARIANT {p.Name} starts in {CarName(variant)}");
+                Queue(p, new Want(variant, SkinFor(p, variant)) { Start = true });
             }
         }
 
@@ -503,11 +535,11 @@ namespace HmmRevive
                     continue;
                 }
                 Want want = swap.Value;
-                if (player.CharacterId == want.Car && player.Character != null && player.Character.CharacterId == want.Car
+                if (player.Character != null && Variants.Current(player) == want.Car
                     && player.Customizations.GetGuidBySlot(PlayerCustomizationSlot.Skin) == want.Skin) continue;
                 // Wait for the skin model; requeued behind any later swap, which is fine as the server only sends a car's
                 // next swap after its previous one (at least one death or round apart).
-                if (want.Skin != Guid.Empty && !SkinReady(SkinAssetName(hub.InventoryColletion.GetCharacterGuidId(want.Car), want.Skin)))
+                if (want.Skin != Guid.Empty && !SkinReady(SkinAssetName(hub.InventoryColletion.GetCharacterGuidId(Variants.Base(want.Car)), want.Skin)))
                 {
                     ClientQueue.Enqueue(swap);
                     continue;
@@ -610,7 +642,8 @@ namespace HmmRevive
             bool server = hub.Net.IsServer(), client = hub.Net.IsClient();
             CharacterInfo info;
             IItemType item;
-            if (!CharacterInfos().TryGetValue(charId, out info) || info == null || !hub.InventoryColletion.AllCharactersByCharacterId.TryGetValue(charId, out item))
+            bool loaded = Variants.Get(charId) != null ? (info = Variants.Info(charId, CharacterInfos())) != null : CharacterInfos().TryGetValue(charId, out info);
+            if (!loaded || info == null || !hub.InventoryColletion.AllCharactersByCharacterId.TryGetValue(Variants.Base(charId), out item))
             {
                 Log.Error($"car swap: car {charId} is not loaded, {player.Name} keeps {player.Character?.name}");
                 return false;
@@ -695,6 +728,7 @@ namespace HmmRevive
                 turret.TurretConfiguration = info.TurretMovementConfiguration;
                 combat.Data.SetInfo(info.Combat);
                 AddGadgets(factory, container, combat, info);
+                Variants.ApplyGadgetOverrides(combat, info);
                 // Rebuilt while dead: the new gadgets missed the unspawn the old ones got. Without it a toggle gadget
                 // (GadgetSwitchUpdater, e.g. Full Metal Judge) thinks the car is alive and re-fires an effect that
                 // PerkDestroyOnDeath kills at once, forever, inside one server frame.

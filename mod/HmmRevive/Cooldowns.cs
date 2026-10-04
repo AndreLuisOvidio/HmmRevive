@@ -17,6 +17,7 @@ namespace HmmRevive
     ///   CarSwap's Update, so cars rebuilt by a /car swap get it too.
     /// - scripted ones (CombatGadget) read theirs in StartCooldownBlock.GetCooldown, which asks ScriptCooldown (IL hook).
     /// The game's cooldown reductions still apply on top, as they do to the gadgets' own values.
+    /// A mod car's own cooldown (Variants.cs, e.g. Stingray W CD) wins over the lobby's.
     /// </summary>
     public static class Cooldowns
     {
@@ -38,12 +39,14 @@ namespace HmmRevive
                 var combat = p.CharacterInstance.GetBitComponent<CombatObject>();
                 if (combat == null || combat.Id == null) continue;
                 if (Cars.Add(combat.Id.ObjId)) Log.Info($"cooldowns {target}s for {p.Name} (car {combat.Id.ObjId})");
+                float own;
+                float want = Variants.OwnCooldown(combat.Id.ObjId, out own) ? own : target;
                 foreach (string slot in AbilitySlots)
                 {
                     var gadget = typeof(CombatObject).GetField(slot).GetValue(combat) as GadgetBehaviour;
                     var cooldown = gadget != null ? CooldownField.GetValue(gadget) as Upgradeable : null;
-                    if (cooldown == null || (cooldown.Value == target && cooldown.Level == 0)) continue;
-                    cooldown.Value = target;
+                    if (cooldown == null || (cooldown.Value == want && cooldown.Level == 0)) continue;
+                    cooldown.Value = want;
                     cooldown.Level = 0; // Get() returns Value at level 0
                 }
             }
@@ -53,13 +56,16 @@ namespace HmmRevive
         // context.Id is the gadget's slot; only the abilities change, not emotes or quick chat.
         public static float ScriptCooldown(float cooldown, object context)
         {
-            if (Entry.Cooldown <= 0f || Cars.Count == 0) return cooldown;
+            if (!Variants.AnyOwnCooldown && (Entry.Cooldown <= 0f || Cars.Count == 0)) return cooldown;
             var ctx = context as IHMMGadgetContext;
             var combat = ctx != null ? ctx.Owner as CombatObject : null;
-            if (combat == null || combat.Id == null || !Cars.Contains(combat.Id.ObjId)) return cooldown;
+            if (combat == null || combat.Id == null) return cooldown;
             int slot = ctx.Id;
-            return slot == (int)GadgetSlot.CustomGadget0 || slot == (int)GadgetSlot.CustomGadget1 || slot == (int)GadgetSlot.CustomGadget2
-                || slot == (int)GadgetSlot.BoostGadget ? Entry.Cooldown : cooldown;
+            if (slot != (int)GadgetSlot.CustomGadget0 && slot != (int)GadgetSlot.CustomGadget1 && slot != (int)GadgetSlot.CustomGadget2
+                && slot != (int)GadgetSlot.BoostGadget) return cooldown;
+            float own;
+            if (Variants.OwnCooldown(combat.Id.ObjId, out own)) return own;
+            return Entry.Cooldown > 0f && Cars.Contains(combat.Id.ObjId) ? Entry.Cooldown : cooldown;
         }
     }
 }
