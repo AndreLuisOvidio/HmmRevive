@@ -14,6 +14,9 @@ let chatSeen = -1;     // newest lobby chat message seen on the lobby view
 let emoteSlot = -1;    // Settings: the emote slot being changed (0-3), -1 = none
 const DIFFS = () => [["auto", t("diff_auto")], ["easy", t("diff_easy")], ["medium", t("diff_medium")], ["hard", t("diff_hard")]];
 const DRAFT_TIMES = [0, 30, 45, 60, 90, 120]; // seconds per draft turn; 0 = no limit
+const COOLDOWNS = ["", "0.1", "0.25", "0.5", "1", "2", "3", "5"]; // seconds for every car's abilities; "" = the game's own
+// How a player drives on the 2017 builds: each player's own setting (passed to their own game only).
+const DRIVES = () => [["mouse", t("drive_mouse")], ["wasd", t("drive_wasd")]];
 const SCORES = () => [["1", t("score_1")], ["2", "2"], ["3", t("score_3")], ["4", "4"], ["5", "5"]];
 const RESOLUTIONS = [[1280, 720], [1600, 900], [1920, 1080], [2560, 1440], [3840, 2160]];
 
@@ -112,6 +115,213 @@ const joinAddresses = () => {
   return vpn.length ? vpn : S.addresses.filter((a) => a.kind === "LAN").slice(0, 1);
 };
 const carOptions = () => C.cars.map((c) => [String(c.id), c.name]);
+const ensureCarStats = (H) => {
+  if (!H.carStats) H.carStats = { default: { hp: 100, move: 100, damage: 100 } };
+  if (!H.carStats.default) H.carStats.default = { hp: 100, move: 100, damage: 100 };
+};
+const statMultStr = (mult) => {
+  if (mult <= 0) return "0×";
+  const r = Math.round(mult * 100) / 100;
+  return Number.isInteger(r) ? `${r}×` : `${r.toFixed(2).replace(/0+$/, "").replace(/\.$/, "")}×`;
+};
+const statPctLabel = (pct) => `${pct}% (${statMultStr(pct / 100)})`;
+const readStatPctEl = (el) => Math.min(300, Math.max(10, parseInt(el?.value, 10) || 100));
+const syncStatRangeUi = (input) => {
+  if (!input) return;
+  const pct = readStatPctEl(input);
+  input.style.setProperty("--pos", `${((pct - 10) / 290) * 100}%`);
+  input.setAttribute("aria-valuenow", String(pct));
+  const out = input.parentElement?.querySelector("output");
+  if (out) out.textContent = statPctLabel(pct);
+};
+const carStatRows = () => [{ id: "default", name: t("car_stats_default") }, ...C.cars.map((c) => ({ id: String(c.id), name: c.name }))];
+const effectiveCarStat = (H, carId, field) => {
+  const d = H.carStats.default || { hp: 100, move: 100, damage: 100 };
+  if (carId === "default") return d[field] ?? 100;
+  const o = H.carStats[carId];
+  return o?.[field] ?? d[field] ?? 100;
+};
+const carStatOverride = (H, carId) => {
+  if (carId === "default") return false;
+  const o = H.carStats[carId];
+  if (!o) return false;
+  const d = H.carStats.default || { hp: 100, move: 100, damage: 100 };
+  return (o.hp ?? d.hp) !== d.hp || (o.move ?? d.move) !== d.move || (o.damage ?? d.damage) !== d.damage;
+};
+const statInputId = (carId, stat) => `h-stat-${carId}-${stat}`;
+/** Default row = global: mirror HP/move/damage on every car and drop per-car overrides. */
+const syncDefaultRowToAllCars = () => {
+  const box = $("#h-stat-list");
+  if (!box) return;
+  for (const stat of ["hp", "move", "damage"]) {
+    const src = box.querySelector(`.stat-car-input[data-car="default"][data-stat="${stat}"]`);
+    if (!src) continue;
+    box.querySelectorAll(`.stat-car-input[data-stat="${stat}"]`).forEach((inp) => {
+      if (inp.dataset.car === "default") return;
+      inp.value = src.value;
+      syncStatRangeUi(inp);
+    });
+  }
+  box.querySelectorAll(".car-stat-row.has-override").forEach((r) => r.classList.remove("has-override"));
+};
+const pullCarStatsFromDom = (H) => {
+  ensureCarStats(H);
+  const defHp = readStatPctEl($(`#${statInputId("default", "hp")}`));
+  const defMove = readStatPctEl($(`#${statInputId("default", "move")}`));
+  const defDmg = readStatPctEl($(`#${statInputId("default", "damage")}`));
+  H.carStats.default = { hp: defHp, move: defMove, damage: defDmg };
+  for (const row of carStatRows()) {
+    if (row.id === "default") continue;
+    const hp = readStatPctEl($(`#${statInputId(row.id, "hp")}`));
+    const move = readStatPctEl($(`#${statInputId(row.id, "move")}`));
+    const damage = readStatPctEl($(`#${statInputId(row.id, "damage")}`));
+    if (hp === defHp && move === defMove && damage === defDmg) delete H.carStats[row.id];
+    else H.carStats[row.id] = { hp, move, damage };
+  }
+};
+let statListSig = "";
+let statConfigureTimer;
+const scheduleCarStatsConfigure = () => {
+  clearTimeout(statConfigureTimer);
+  statConfigureTimer = setTimeout(async () => {
+    if (!S.hostSetup) return;
+    const H = structuredClone(S.hostSetup);
+    pullCarStatsFromDom(H);
+    statListSig = carStatsListSig(H);
+    await act("host/configure", H);
+  }, 350);
+};
+const carStatsListSig = (H) => JSON.stringify({ cars: C.cars.map((c) => c.id), stats: H.carStats, lang: lang });
+const statCellHtml = (carId, stat, pct, disabled) => {
+  const id = statInputId(carId, stat);
+  const v = Math.min(300, Math.max(10, Math.round((pct ?? 100) / 5) * 5));
+  return `<div class="car-stat-cell"><input type="range" class="stat-range-input stat-car-input" id="${id}" data-car="${esc(carId)}" data-stat="${stat}" min="10" max="300" step="5" value="${v}"${disabled ? " disabled" : ""} aria-label="${esc(stat)}"><output for="${id}">${statPctLabel(v)}</output></div>`;
+};
+const renderCarStatsList = (H, locked) => {
+  const box = $("#h-stat-list");
+  if (!box) return;
+  if (box.contains(document.activeElement)) return;
+  const sig = carStatsListSig(H) + (locked ? "|lock" : "");
+  if (sig === statListSig && box.childElementCount > 0) return;
+  statListSig = sig;
+  const head = `<div class="car-stat-head"><span>${t("car_stats_col_car")}</span><span>${t("stat_hp")}</span><span>${t("stat_move")}</span><span>${t("stat_damage")}</span></div>`;
+  const rows = carStatRows().map((row) => {
+    const cls = row.id === "default" ? "car-stat-row is-default" : carStatOverride(H, row.id) ? "car-stat-row has-override" : "car-stat-row";
+    return `<div class="${cls}"><span class="car-stat-name" title="${esc(row.name)}">${esc(row.name)}</span>`
+      + statCellHtml(row.id, "hp", effectiveCarStat(H, row.id, "hp"), locked)
+      + statCellHtml(row.id, "move", effectiveCarStat(H, row.id, "move"), locked)
+      + statCellHtml(row.id, "damage", effectiveCarStat(H, row.id, "damage"), locked)
+      + "</div>";
+  }).join("");
+  box.innerHTML = head + rows;
+  box.querySelectorAll(".stat-car-input").forEach((input) => syncStatRangeUi(input));
+};
+// ----- balance presets -----
+// A preset is the lobby's balance: ball speed, ability cooldowns and car stats. The host saves presets by name (settings) and
+// shares them as a code, "HMMR1:" + base64 of {n: name, b: ball speed, c: cooldown, s: car stats in the launcher's compact
+// form "default:100,100,100;8:150,100,100"}. The launcher cleans whatever a code holds like any other lobby setting.
+const PRESET_PREFIX = "HMMR1:";
+const PRESET_NORMAL = "normal";
+const clampPct = (v) => Math.min(300, Math.max(10, parseInt(v, 10) || 100));
+const compactStats = (cs) => {
+  const d = (cs && cs.default) || {};
+  const row = (o) => [clampPct(o.hp ?? d.hp), clampPct(o.move ?? d.move), clampPct(o.damage ?? d.damage)].join(",");
+  const def = row(d);
+  const cars = Object.keys(cs || {}).filter((k) => /^\d{1,3}$/.test(k)).sort((a, b) => a - b)
+    .map((k) => [k, row(cs[k])]).filter(([, r]) => r !== def);
+  return ["default:" + def, ...cars.map(([k, r]) => k + ":" + r)].join(";");
+};
+const parseStats = (text) => {
+  const cs = { default: { hp: 100, move: 100, damage: 100 } };
+  for (const part of String(text || "").split(";")) {
+    const m = /^(default|\d{1,3}):(\d{1,3}),(\d{1,3}),(\d{1,3})$/.exec(part.trim());
+    if (m) cs[m[1]] = { hp: clampPct(m[2]), move: clampPct(m[3]), damage: clampPct(m[4]) };
+  }
+  return cs;
+};
+const balanceOf = (H) => ({ ballSpeed: H.ballSpeed || 100, cooldown: H.cooldown || "", carStats: H.carStats || parseStats("") });
+const balanceKey = (p) => [p.ballSpeed || 100, p.cooldown || "", compactStats(p.carStats)].join("|");
+const savedPresets = () => (Array.isArray(S.settings.presets) ? S.settings.presets : []);
+// The saved preset (index) or "normal" the host setup matches, else "" (custom).
+const currentPreset = (H) => {
+  const key = balanceKey(balanceOf(H));
+  const i = savedPresets().findIndex((p) => balanceKey(p) === key);
+  if (i >= 0) return String(i);
+  return key === balanceKey({}) ? PRESET_NORMAL : "";
+};
+const presetCode = (p) => PRESET_PREFIX + btoa(unescape(encodeURIComponent(JSON.stringify({ n: p.name || "", b: p.ballSpeed || 100, c: p.cooldown || "", s: compactStats(p.carStats) }))));
+const readPresetCode = (text) => {
+  const s = String(text || "").replace(/\s+/g, "");
+  if (s.slice(0, PRESET_PREFIX.length).toUpperCase() !== PRESET_PREFIX) return null;
+  try {
+    const o = JSON.parse(decodeURIComponent(escape(atob(s.slice(PRESET_PREFIX.length)))));
+    if (!o || typeof o !== "object") return null;
+    return {
+      name: String(o.n || "").replace(/[\u0000-\u001f]/g, "").trim().slice(0, 40),
+      ballSpeed: Math.min(300, Math.max(50, parseInt(o.b, 10) || 100)),
+      cooldown: typeof o.c === "string" ? o.c : "",
+      carStats: parseStats(o.s),
+    };
+  } catch (e) {
+    return null;
+  }
+};
+async function applyPreset(p) {
+  const H = structuredClone(S.hostSetup);
+  H.ballSpeed = p.ballSpeed || 100;
+  H.cooldown = p.cooldown || "";
+  H.carStats = structuredClone(p.carStats || parseStats(""));
+  return act("host/configure", H);
+}
+const savePresets = (list) => act("settings", { presets: list });
+function renderPresets(H, locked) {
+  const list = savedPresets(), cur = currentPreset(H);
+  fill($("#h-preset"), [...(cur === "" ? [["", t("preset_custom")]] : []), [PRESET_NORMAL, t("preset_normal")],
+    ...list.map((p, i) => [String(i), p.name])], cur);
+  // During a match only the ball speed can change, so presets wait for the lobby.
+  $("#h-preset").disabled = $("#preset-paste").disabled = locked;
+  $("#preset-delete").disabled = !/^\d+$/.test($("#h-preset").value);
+}
+async function presetAction(id) {
+  const H = S.hostSetup, list = savedPresets().slice();
+  const cur = currentPreset(H), named = /^\d+$/.test(cur) ? list[+cur].name : "";
+  if (id === "preset-save") {
+    const name = (prompt(t("preset_name_ask"), named) || "").replace(/[\u0000-\u001f]/g, "").trim().slice(0, 40);
+    if (!name) return;
+    const i = list.findIndex((p) => p.name.toLowerCase() === name.toLowerCase());
+    if (i >= 0 && list[i].name !== named && !confirm(t("preset_replace", list[i].name))) return;
+    const p = { name, ...structuredClone(balanceOf(H)) };
+    if (i >= 0) list[i] = p; else list.push(p);
+    if (await savePresets(list)) toast(t("preset_saved", name), true);
+  } else if (id === "preset-delete") {
+    const i = $("#h-preset").value;
+    if (!/^\d+$/.test(i) || !list[+i] || !confirm(t("preset_confirm_delete", list[+i].name))) return;
+    const [gone] = list.splice(+i, 1);
+    if (await savePresets(list)) toast(t("preset_deleted", gone.name), true);
+  } else if (id === "preset-copy") {
+    const code = presetCode({ name: named, ...balanceOf(H) });
+    try {
+      await navigator.clipboard.writeText(code);
+      toast(t("preset_copied"), true);
+    } catch (e) {
+      prompt(t("preset_show_code"), code); // no clipboard access: let the host copy it by hand
+    }
+  } else if (id === "preset-paste") {
+    const p = readPresetCode(prompt(t("preset_paste_ask"), "") || "");
+    if (p === null) return toast(t("preset_bad_code"));
+    // Kept under its own name; a different preset with that name stays, and this one gets a number.
+    let name = p.name || t("preset_unnamed"), n = 2;
+    const base = name;
+    while (list.some((x) => x.name.toLowerCase() === name.toLowerCase() && balanceKey(x) !== balanceKey(p))) name = `${base} (${n++})`;
+    p.name = name;
+    if (!list.some((x) => x.name.toLowerCase() === name.toLowerCase())) list.push(p);
+    if (!(await savePresets(list))) return;
+    const later = S.lobby && S.lobby.phase !== "lobby";
+    if (!later && !(await applyPreset(p))) return;
+    toast(t(later ? "preset_imported_later" : "preset_imported", name), true);
+  }
+}
+
 const skinOptions = (carId) => skinsOf(carId).map((s, i) => [String(i), i === 0 ? t("original", s) : s]).concat([["random", t("random")]]);
 const mySkin = () => ((S.settings.skins || {})[carName(S.settings.car)] ?? "0");
 const diffName = (d) => (DIFFS().find((x) => x[0] === d) || [d, d])[1];
@@ -249,6 +459,7 @@ function renderLobby() {
   $("#lobby-title").textContent = t("someones_lobby", L.host || "?");
   const hostOut = L.members.some((m) => m.host && m.team === "none");
   $("#lobby-sub").textContent = (legacy ? buildName(L.build) + " · " + arenaName(L.arena, L.build) : t("lobby_sub", arenaName(L.arena), points(L.score))) + ballNote(L.ballSpeed) + (L.draftOn ? " · " + t("draft_title") : "")
+    + (!legacy && L.cooldown ? " · " + t("cd_short", L.cooldown) : "")
     + (hostOut ? " · " + t("host_not_playing") : "") + (amHost ? "" : " · " + S.lobbyAddress);
 
   // status line
@@ -291,6 +502,8 @@ function renderLobby() {
   $("#drafted-car").hidden = !playing || !drafted;
   document.querySelectorAll(".player-only").forEach((e) => (e.hidden = !playing || legacy || (L.draft && !drafted)));
   $("#legacy-pick").hidden = !playing || !legacy;
+  $("#lobby-drive-row").hidden = !playing || !legacy;
+  fill($("#lobby-drive"), DRIVES(), S.settings.drive || "mouse");
   $("#lobby-car").disabled = $("#lobby-skin").disabled = locked;
   const ready = $("#ready");
   ready.hidden = !playing;
@@ -306,7 +519,12 @@ function renderLobby() {
     fill($("#h-arena"), arenasOf(L.build).map((a) => [String(a.id), a.name]), legacy ? legacyArena(H.arena) : H.arena);
     fill($("#h-score"), SCORES(), H.score);
     fill($("#h-ball"), BALL_SPEEDS.concat(BALL_SPEEDS.includes(H.ballSpeed) ? [] : [H.ballSpeed]).map((p) => [String(p), ballName(p)]), String(H.ballSpeed || 100));
-    $("#h-arena").disabled = $("#h-score").disabled = locked; // the ball speed stays changeable during the match
+    $("#h-arena").disabled = $("#h-score").disabled = $("#h-cd").disabled = locked; // the ball speed stays changeable during the match
+    const cd = H.cooldown || "";
+    fill($("#h-cd"), COOLDOWNS.concat(COOLDOWNS.includes(cd) ? [] : [cd])
+      .map((s) => [s, s ? t("cd_seconds", s) : t("cd_off")]), cd);
+    renderCarStatsList(H, locked);
+    renderPresets(H, locked);
     document.querySelectorAll(".steam-only").forEach((e) => (e.hidden = legacy));
     for (const team of ["blue", "red"]) {
       $(`#h-${team}-bots`).textContent = L.teams[team].bots + (H[team].bots > L.teams[team].bots ? ` (${H[team].bots})` : "");
@@ -465,6 +683,7 @@ function renderSettings() {
   if (document.activeElement !== name && name.value !== S.settings.name) name.value = S.settings.name;
   fill($("#s-car"), carOptions(), S.settings.car);
   fill($("#s-skin"), skinOptions(S.settings.car), mySkin());
+  fill($("#s-drive"), DRIVES(), S.settings.drive || "mouse");
   skinPic($("#s-skin-pic"), S.settings.car, mySkin());
   renderEmotes();
   const res = RESOLUTIONS.map(([w, h]) => [`${w}x${h}`, `${w} × ${h}`]);
@@ -572,6 +791,7 @@ document.addEventListener("click", async (e) => {
       if (confirm(t("confirm_draft_reset"))) return act("host/draft-reset", {});
       return;
     case "start": return act("host/start", {});
+    case "preset-save": case "preset-delete": case "preset-copy": case "preset-paste": return presetAction(b.id);
     case "stop":
       if (confirm(t(S.lobby.phase === "draft" ? "confirm_stop_draft" : "confirm_stop"))) return act("host/stop", {});
       return;
@@ -605,6 +825,15 @@ $("#quick-form").addEventListener("submit", (e) => {
   if (a) act("quickjoin", { address: a }, t("starting_game"));
 });
 
+document.addEventListener("input", (e) => {
+  const el = e.target;
+  if (el.classList.contains("stat-car-input")) {
+    syncStatRangeUi(el);
+    if (el.dataset.car === "default") syncDefaultRowToAllCars();
+    scheduleCarStatsConfigure();
+  }
+});
+
 document.addEventListener("change", async (e) => {
   const el = e.target;
   if (el.dataset.botcar) {
@@ -636,6 +865,12 @@ document.addEventListener("change", async (e) => {
       return act("settings", { width: w, height: h });
     }
     case "s-full": return act("settings", { fullscreen: el.checked });
+    case "s-drive": case "lobby-drive": return act("settings", { drive: el.value });
+    case "h-preset": {
+      if (el.value === "") return;
+      const p = el.value === PRESET_NORMAL ? { ballSpeed: 100, cooldown: "", carStats: parseStats("") } : savedPresets()[+el.value];
+      return p && applyPreset(p);
+    }
     case "s-nov": return act("settings", { showNov: el.checked });
     case "h-spec": case "h-draft": case "h-bans": case "h-picks": case "h-dtime": {
       const H = structuredClone(S.hostSetup);
@@ -654,12 +889,13 @@ document.addEventListener("change", async (e) => {
       const n = (team) => S.lobby.members.filter((m) => m.team === team).length;
       return act("lobby/update", { team: n("blue") <= n("red") ? "blue" : "red" });
     }
-    case "h-auto": case "h-arena": case "h-score": case "h-ball": case "h-blue-diff": case "h-red-diff": {
+    case "h-auto": case "h-arena": case "h-score": case "h-ball": case "h-cd": case "h-blue-diff": case "h-red-diff": {
       const H = structuredClone(S.hostSetup);
       H.autoStart = $("#h-auto").checked;
       H.arena = parseInt($("#h-arena").value, 10);
       H.score = parseInt($("#h-score").value, 10);
       H.ballSpeed = parseInt($("#h-ball").value, 10);
+      H.cooldown = $("#h-cd").value;
       H.blue.difficulty = $("#h-blue-diff").value;
       H.red.difficulty = $("#h-red-diff").value;
       return act("host/configure", H);

@@ -28,9 +28,10 @@ namespace HmmRevive.Legacy
             if (cur is ServerGame) { if (_gameSince < 0f) _gameSince = Time.realtimeSinceStartup; }
             else _gameSince = -1f;
             if (Entry.ServerMode) BotsOnlyStart(hub, cur);
-            else Shots.Tick();
+            else { Shots.Tick(); Drive.Tick(hub, cur); DropperLook.Tick(hub); }
             if (Time.realtimeSinceStartup < _next) return;
             _next = Time.realtimeSinceStartup + 5f;
+            Entry.HideOwnWindows(); // test clients: Unity may show its window again
             try { Log.Info(Line(hub, cur)); }
             catch (Exception e) { Log.Info("WATCH failed: " + e.Message); }
         }

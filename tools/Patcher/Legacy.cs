@@ -233,6 +233,8 @@ static class Legacy
         foreach (var (type, name) in new[] { ("HeavyMetalMachines.HMMHub", "Awake"), ("Pocketverse.StateMachine", "Awake") })
             Prologue(Target(type, name), il => new[] { il.Create(OpCodes.Ldarg_0), il.Create(OpCodes.Call, Hook("BeforeAwake")) });
         Prologue(Target("HeavyMetalMachines.HMMHub", "Start"), il => new[] { il.Create(OpCodes.Ldarg_0), il.Create(OpCodes.Call, Hook("HubStart")) });
+        if (module.GetType("SplashController") != null) // the 2017 builds' first scene (not in 2016's firstpass)
+            Prologue(Target("SplashController", "Start"), il => new[] { il.Create(OpCodes.Call, Hook("SplashStart")) });
         Prologue(Target("Pocketverse.GameState", "EnableState"), il => new[] { il.Create(OpCodes.Ldarg_0), il.Create(OpCodes.Call, Hook("StateEnabled")) });
         Prologue(Target("HeavyMetalMachines.HMMHub", "Quit"), il => new[] { il.Create(OpCodes.Call, Hook("LogQuit")) });
 

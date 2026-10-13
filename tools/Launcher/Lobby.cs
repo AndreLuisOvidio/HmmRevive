@@ -57,10 +57,12 @@ namespace HmmRevive.Launcher
         public string Message = "";
         public int Arena = 1, Score = 3;
         public int BallSpeed = 100; // percent, 50-300; the host may change it during the match too
+        public Dictionary<string, object> CarStats = Game.CleanCarStats(null); // HP/move/damage % per car id or "default" (Steam build only)
         public bool AutoStart = true;
         public bool Spectators, DraftOn;
         public string DraftBans = Draft.DefaultBans, DraftPicks = Draft.DefaultPicks;
         public int DraftTime = Draft.DefaultTurnSeconds; // seconds per draft turn, 0 = no limit
+        public string Cooldown = ""; // seconds for every car's abilities ("0.1"), "" = the game's own (Steam build only)
         private Draft _draft; // this match's draft: running (phase "draft") or done (cars limited to each team's picks)
         private readonly Random _rng = new Random();
         public readonly Dictionary<string, TeamSetup> Teams = new Dictionary<string, TeamSetup> { ["blue"] = new TeamSetup(), ["red"] = new TeamSetup() };
@@ -127,6 +129,8 @@ namespace HmmRevive.Launcher
             DraftBans = Draft.Clean(h.Str("draftBans")) ?? DraftBans;
             DraftPicks = Draft.Clean(h.Str("draftPicks")) ?? DraftPicks;
             DraftTime = Math.Max(0, Math.Min(600, h.Int("draftTime", DraftTime)));
+            Cooldown = CleanCooldown(h.Str("cooldown") ?? Cooldown);
+            CarStats = Game.CleanCarStats(h.Obj("carStats"));
             foreach (string t in new[] { "blue", "red" })
             {
                 var d = h.Obj(t);
@@ -138,6 +142,15 @@ namespace HmmRevive.Launcher
             }
         }
 
+        // "0.1" style seconds between 0.05 and 60, else "" (the game's own cooldowns).
+        public static string CleanCooldown(string s)
+        {
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            double v;
+            if (!double.TryParse((s ?? "").Trim().Replace(',', '.'), System.Globalization.NumberStyles.Float, inv, out v)) return "";
+            return v >= 0.05 && v <= 60 ? v.ToString("0.###", inv) : "";
+        }
+
         private static string CleanCar(string c)
         {
             if (c == "random" || c == "default") return c;
@@ -147,7 +160,7 @@ namespace HmmRevive.Launcher
         public Dictionary<string, object> SetupJson()
         {
             var d = new Dictionary<string, object> { ["arena"] = Arena, ["score"] = Score, ["ballSpeed"] = BallSpeed, ["autoStart"] = AutoStart, ["spectators"] = Spectators, ["draft"] = DraftOn,
-                ["draftBans"] = DraftBans, ["draftPicks"] = DraftPicks, ["draftTime"] = DraftTime };
+                ["draftBans"] = DraftBans, ["draftPicks"] = DraftPicks, ["draftTime"] = DraftTime, ["cooldown"] = Cooldown, ["carStats"] = CarStats };
             foreach (var t in Teams)
                 d[t.Key] = new Dictionary<string, object> { ["bots"] = t.Value.Bots, ["difficulty"] = t.Value.Difficulty, ["cars"] = t.Value.Cars.ToArray() };
             return d;
@@ -514,7 +527,7 @@ namespace HmmRevive.Launcher
                 Build = Build, Port = GamePort, Players = Players.Count(), Arena = Arena, Score = Score == 3 ? 0 : Score,
                 BluBots = BotsOn("blue"), RedBots = BotsOn("red"),
                 BluDifficulty = Teams["blue"].Difficulty, RedDifficulty = Teams["red"].Difficulty,
-                BluBotCars = BotCars("blue"), RedBotCars = BotCars("red"),
+                BluBotCars = BotCars("blue"), RedBotCars = BotCars("red"), Cooldown = legacy ? "" : Cooldown, CarStats = legacy ? null : Game.CompactCarStats(CarStats),
                 BallSpeed = BallSpeed, HostName = _members.FirstOrDefault(m => m.IsHost && m.InMatch)?.Name,
             };
             if (legacy) // the game's own rules: its two arenas, cars picked in the game, original points to win
@@ -651,6 +664,7 @@ namespace HmmRevive.Launcher
                     ["arena"] = Arena,
                     ["ballSpeed"] = BallSpeed,
                     ["score"] = Score,
+                    ["carStats"] = Builds.IsLegacy(Build) ? null : Game.CompactCarStats(CarStats),
                     ["autoStart"] = AutoStart,
                     ["spectators"] = SpectatorsOn,
                     ["spectatorSeatsFreeing"] = Freeing,
@@ -658,6 +672,7 @@ namespace HmmRevive.Launcher
                     ["draftBans"] = DraftBans,
                     ["draftPicks"] = DraftPicks,
                     ["draftTime"] = DraftTime,
+                    ["cooldown"] = Builds.IsLegacy(Build) ? "" : Cooldown,
                     ["draft"] = _draft?.Json(me?.Team),
                     ["nextIsDraft"] = NeedsDraft,
                     ["countdown"] = _countdownEnd == null ? -1 : Math.Max(0, (int)Math.Ceiling((_countdownEnd.Value - DateTime.UtcNow).TotalSeconds)),

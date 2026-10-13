@@ -2,6 +2,36 @@
 
 Newest first. The version is shown on the first line of every kit window (setup, play, host).
 
+## 1.5 (2026-10-13)
+
+Thanks to AndreLuisOvidio and DantasB for the first two community contributions.
+
+New since the 1.5 preview:
+
+- **Balance presets:** the lobby's match settings now start with "Balance preset". A preset keeps the ball speed, the
+  ability cooldowns and the car stats together, so a tournament's rules are one click instead of moving every slider
+  again. "Save as preset…" keeps the current settings under a name, and picking a preset in the list puts them back
+  ("Normal" = the game's own). "Copy code" copies a short code (it starts with `HMMR1:`) to share in Discord or the
+  chat; "Paste code…" adds someone else's preset to your list and uses it. The 2017 versions use only the ball speed.
+- **Each player picks how they drive on the 2017 versions.** The host's "Drive with WASD (everyone)" is gone: in
+  Settings (and in the lobby, next to Ready) every player picks "Mouse" (the game's own: left button forward, right
+  button reverse, the car turns towards the cursor) or "Keyboard: WASD" (like the Steam version; the mouse buttons
+  still work for speed). Mouse and keyboard players play together in the same match. Going back to Mouse also puts
+  the game's own mouse driving back.
+
+The rest of 1.5 (from the preview):
+
+- **Ability cooldowns** (by AndreLuisOvidio): the host can set every car's ability cooldown in the lobby's match
+  settings ("Ability cooldowns": 0.1 to 5 seconds, or the game's own). It applies to both weapons, the special and the
+  boost of every car, players and bots. Steam version.
+- **Car stats** (by DantasB): the host can change HP, move speed and damage, from 10% to 300%, for every car at once
+  (top row) or for single cars, in the lobby's match settings. Damage stays normal while a car holds the ball. Steam
+  version.
+- **Ball droppers you can see on Metal God Arena (2017 versions):** the red and blue droppers that make you drop the
+  ball were only partly drawn, and some were invisible, so you could lose the ball on what looked like bare floor. Now
+  every dropper glows in its team's colour exactly where it is.
+- Everyone in a lobby needs HMM Revive 1.5.
+
 ## 1.4 (2026-10-05)
 
 New since the 1.4 preview:

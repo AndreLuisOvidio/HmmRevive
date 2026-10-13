@@ -237,6 +237,28 @@ namespace HmmRevive.Launcher
             return null;
         }
 
+        /// <summary>
+        /// The host's balance presets (the page saves the whole list): a name and what the lobby's match settings would get
+        /// from it (ball speed, ability cooldowns, car stats), cleaned the same way.
+        /// </summary>
+        private static List<object> CleanPresets(IEnumerable<object> list)
+        {
+            var clean = new List<object>();
+            foreach (var p in list.OfType<Dictionary<string, object>>())
+            {
+                string name = new string((p.Str("name") ?? "").Where(ch => !char.IsControl(ch)).ToArray()).Trim();
+                if (name.Length > 40) name = name.Substring(0, 40);
+                if (name.Length == 0 || clean.Cast<Dictionary<string, object>>().Any(x => string.Equals(x.Str("name"), name, StringComparison.OrdinalIgnoreCase))) continue;
+                clean.Add(new Dictionary<string, object>
+                {
+                    ["name"] = name, ["ballSpeed"] = Math.Max(50, Math.Min(300, p.Int("ballSpeed", 100))),
+                    ["cooldown"] = Lobby.CleanCooldown(p.Str("cooldown")), ["carStats"] = Game.CleanCarStats(p.Obj("carStats") ?? new Dictionary<string, object>()),
+                });
+                if (clean.Count == 100) break;
+            }
+            return clean;
+        }
+
         private static Response SaveSettings(Dictionary<string, object> d)
         {
             if (d.ContainsKey("name"))
@@ -268,6 +290,8 @@ namespace HmmRevive.Launcher
             if (Builds.Legacy.Contains(d.Str("hostBuild")) || d.Str("hostBuild") == Builds.Steam) Settings.Data["hostBuild"] = d.Str("hostBuild");
             if (d.ContainsKey("showNov")) Settings.Data["showNov"] = d.Bool("showNov", false); // Nov 2017 build in the Host list
             if (d.Str("lang") == "en" || d.Str("lang") == "pt") Settings.Data["lang"] = d.Str("lang"); // page language
+            if (d.Str("drive") == "mouse" || d.Str("drive") == "wasd") Settings.Data["drive"] = d.Str("drive"); // how I drive on the 2017 builds
+            if (d.ContainsKey("presets")) Settings.Data["presets"] = CleanPresets(d.List("presets"));
             Settings.Save();
             _session?.SendChoices(null); // car/skin changes show in the lobby
             return Ok();

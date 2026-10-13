@@ -97,6 +97,7 @@
           <img class="skin-pic" id="lobby-skin-pic" alt="" hidden>
         </div>
         <p class="hint" id="legacy-pick" data-i18n="legacy_pick_hint" hidden></p>
+        <label id="lobby-drive-row" hidden><span data-i18n="drive_2017"></span> <select id="lobby-drive"></select></label>
         <button class="ready big" id="ready"></button>
         <button class="ghost" id="relaunch" data-i18n="start_again" hidden></button>
       </div>
@@ -110,10 +111,26 @@
       </div>
       <div class="panel hostbox" id="hostbox" hidden>
         <h2 data-i18n="match_settings"></h2>
+        <div class="presets">
+          <label><span data-i18n="preset"></span> <select id="h-preset"></select></label>
+          <div class="row">
+            <button id="preset-save" data-i18n="preset_save"></button>
+            <button id="preset-delete" data-i18n="preset_delete"></button>
+            <button id="preset-copy" data-i18n="preset_copy"></button>
+            <button id="preset-paste" data-i18n="preset_paste"></button>
+          </div>
+          <p class="hint" data-i18n="preset_hint"></p>
+        </div>
         <label><span data-i18n="arena"></span> <select id="h-arena"></select></label>
         <label><span data-i18n="ball_speed"></span> <select id="h-ball"></select></label>
         <p class="hint" id="h-ball-hint" data-i18n="ball_speed_hint"></p>
         <label class="steam-only"><span data-i18n="points_to_win"></span> <select id="h-score"></select></label>
+        <label class="steam-only"><span data-i18n="ability_cooldown"></span> <select id="h-cd"></select></label>
+        <div class="car-stats steam-only" id="h-stats-box">
+          <h3 data-i18n="car_stats_title"></h3>
+          <p class="hint" data-i18n="car_stats_hint"></p>
+          <div class="car-stat-list-wrap"><div class="car-stat-list" id="h-stat-list"></div></div>
+        </div>
         <div class="bots">
           <div><span class="blue-t" data-i18n="blue_bots"></span> <span class="stepper"><button data-bots="blue:-1">−</button><b id="h-blue-bots"></b><button data-bots="blue:1">+</button></span>
             <select id="h-blue-diff"></select></div>
@@ -159,6 +176,8 @@
           <img class="skin-pic" id="s-skin-pic" alt="" hidden>
         </div>
         <p class="hint" data-i18n="skin_hint"></p>
+        <label><span data-i18n="drive_2017"></span> <select id="s-drive"></select></label>
+        <p class="hint" data-i18n="drive_hint"></p>
         <h2 data-i18n="emotes_title"></h2>
         <div id="s-emotes"></div>
         <label><span data-i18n="language"></span> <select id="s-lang">

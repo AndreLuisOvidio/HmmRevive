@@ -260,6 +260,8 @@ namespace HmmRevive.Launcher
             public int BallSpeed = 100; // percent: 100 = the game's own ball speed (mod BallSpeed.cs)
             public string Build = Builds.Steam, RedDifficulty = "auto", BluDifficulty = "auto", RedBotCars = "", BluBotCars = "";
             public string HostName; // the lobby host's player name: only they may type /ballspeed in the match
+            public string Cooldown = ""; // seconds for every car's abilities, "" = the game's own
+            public string CarStats; // the lobby's car stats for --hmmrevive-car-stats, null = the game's own
         }
 
         /// <summary>The file a running server reads every second for changes the host makes during the match.</summary>
@@ -284,6 +286,43 @@ namespace HmmRevive.Launcher
             yield return "--hmmrevive-live=" + live;
         }
 
+        // ---- the lobby's car stats (mod CarStats.cs): {"default": {hp, move, damage}, "<car id>": {...}}, percent 10-300 ----
+
+        /// <summary>The host's car stats with only known keys and numbers in range; cars equal to "default" are dropped.</summary>
+        public static Dictionary<string, object> CleanCarStats(Dictionary<string, object> root)
+        {
+            var clean = new Dictionary<string, object>();
+            if (root == null) return clean;
+            Func<Dictionary<string, object>, Dictionary<string, object>> stats = o => new Dictionary<string, object>
+            {
+                ["hp"] = ClampPct(o?.Int("hp", 100) ?? 100), ["move"] = ClampPct(o?.Int("move", 100) ?? 100), ["damage"] = ClampPct(o?.Int("damage", 100) ?? 100),
+            };
+            var def = stats(root.Obj("default"));
+            clean["default"] = def;
+            foreach (var kv in root)
+            {
+                if (!Regex.IsMatch(kv.Key, @"^\d{1,3}$")) continue; // car ids only
+                var s = stats(kv.Value as Dictionary<string, object>);
+                if (s.Keys.Any(k => (int)s[k] != (int)def[k])) clean[kv.Key] = s;
+            }
+            return clean;
+        }
+
+        /// <summary>--hmmrevive-car-stats value ("default:100,120,100;8:150,100,100"), null when every car keeps the game's own.</summary>
+        public static string CompactCarStats(Dictionary<string, object> root)
+        {
+            root = CleanCarStats(root);
+            var parts = root.Select(kv => (Dictionary<string, object>)kv.Value)
+                .Zip(root.Keys, (s, k) => k + ":" + s["hp"] + "," + s["move"] + "," + s["damage"]).ToList();
+            return parts.Count == 1 && parts[0] == "default:100,100,100" ? null : string.Join(";", parts);
+        }
+
+        /// <summary>A lobby's car stats as sent to the players: passed to our game only if it has exactly that shape.</summary>
+        public static string CleanCompactCarStats(string s) =>
+            s != null && Regex.IsMatch(s, @"^(default|\d{1,3}):\d{1,3},\d{1,3},\d{1,3}(;\d{1,3}:\d{1,3},\d{1,3},\d{1,3})*$") ? s : null;
+
+        private static int ClampPct(int v) => Math.Max(10, Math.Min(300, v));
+
         /// <summary>Headless match server, the same command line as tools/run_server.ps1.</summary>
         public static Process StartServer(ServerOptions o)
         {
@@ -299,6 +338,8 @@ namespace HmmRevive.Launcher
             if (o.BluBotCars != "") a.Add("--hmmrevive-bot-cars-blue=" + o.BluBotCars);
             if (o.RedDifficulty != "auto") a.Add("--hmmrevive-difficulty-red=" + o.RedDifficulty);
             if (o.BluDifficulty != "auto") a.Add("--hmmrevive-difficulty-blue=" + o.BluDifficulty);
+            if (o.Cooldown != "") a.Add("--hmmrevive-cooldown=" + o.Cooldown);
+            if (!string.IsNullOrEmpty(o.CarStats)) a.Add("--hmmrevive-car-stats=" + o.CarStats);
             a.AddRange(new[] { "-logFile", Path.Combine(Paths.Instance, $"server_unity_{o.Port}.log"), "--hmmrevive-server", "--Drafter=0",
                 "BeginConfig", "[Debug]", "SkipSwordfish=true", "IsDebug=true",
                 "[Game]", "PlayerCount=" + o.Players, "ArenaIndex=" + o.Arena, "RedTeamBotsCount=" + o.RedBots, "BluTeamBotsCount=" + o.BluBots,
@@ -338,10 +379,13 @@ namespace HmmRevive.Launcher
         /// <summary>This player's game in direct-connect mode, like play.bat. Team is "red", "blue" or null.</summary>
         /// <param name="team">red, blue, or spec: watch the match as one of the game's spectators (narrators)</param>
         /// <param name="car">car id, or null for the one in the settings</param>
-        public static Process StartClient(string build, string ip, int port, string team, int score, string car = null)
+        /// <param name="cooldown">the lobby's ability cooldown in seconds ("0.1"), null or "" for the game's own</param>
+        /// <param name="carStats">the lobby's car stats (Game.CompactCarStats), null for the game's own</param>
+        /// <param name="wasd">old builds: drive with WASD (this player's own setting)</param>
+        public static Process StartClient(string build, string ip, int port, string team, int score, string car = null, string cooldown = null, string carStats = null, bool wasd = false)
         {
             StopClient();
-            if (Builds.IsLegacy(build)) return StartLegacyClient(build, ip, port, team);
+            if (Builds.IsLegacy(build)) return StartLegacyClient(build, ip, port, team, wasd);
             string name = Settings.Data.Str("name");
             bool spectate = team == Lobby.Spectator;
             car = spectate ? null : string.IsNullOrEmpty(car) ? Settings.Data.Str("car") : car;
@@ -350,6 +394,8 @@ namespace HmmRevive.Launcher
             if (TestBackground) a.AddRange(new[] { "-batchmode", "--hmmrevive-mute" });
             a.AddRange(new[] { "-logFile", Path.Combine(Paths.Instance, $"client_{name}.log") });
             if (score > 0) a.Add("--hmmrevive-score=" + score);
+            if (!string.IsNullOrEmpty(cooldown)) a.Add("--hmmrevive-cooldown=" + cooldown);
+            if (!string.IsNullOrEmpty(carStats)) a.Add("--hmmrevive-car-stats=" + carStats);
             if (!string.IsNullOrEmpty(car)) a.Add("--hmmrevive-car=" + car);
             if (skin != "0") a.Add("--hmmrevive-skin=" + Regex.Replace(skin, @"[\s#""']", ""));
             if (team == "red" || team == "blue") a.Add("--hmmrevive-team=" + team);
@@ -367,13 +413,14 @@ namespace HmmRevive.Launcher
 
         /// <summary>An old build's game: it opens its main menu and joins the server by itself (--hmmrevive-connect); the
         /// player then picks a car in the game's own pick screen.</summary>
-        private static Process StartLegacyClient(string build, string ip, int port, string team)
+        private static Process StartLegacyClient(string build, string ip, int port, string team, bool wasd)
         {
             string name = Settings.Data.Str("name");
             var a = new List<string>();
             if (TestBackground) a.AddRange(new[] { "-batchmode", "-nographics", "-silent-crashes", "--hmmrevive-mute" });
             a.AddRange(new[] { "-logFile", Path.Combine(Builds.Instance(build), $"client_{name}.log"), "--hmmrevive-connect" });
             if (team == "red" || team == "blue") a.Add("--hmmrevive-team=" + team);
+            if (wasd) a.Add("--hmmrevive-wasd");
             int w = Settings.Data.Int("width"), h = Settings.Data.Int("height");
             if (w > 0 && h > 0) a.AddRange(new[] { "-screen-width", w.ToString(), "-screen-height", h.ToString() });
             a.AddRange(new[] { "-screen-fullscreen", Settings.Data.Bool("fullscreen", true) ? "1" : "0" });

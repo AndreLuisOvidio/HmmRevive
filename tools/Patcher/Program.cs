@@ -102,6 +102,36 @@ static class Program
 
         Prologue(Target("Pocketverse.GameState", "EnableState"), il => new[] { il.Create(OpCodes.Ldarg_0), il.Create(OpCodes.Call, Hook("HmmRevive.Hooks", "StateEnabled")) });
         Prologue(Target("HeavyMetalMachines.HMMHub", "Start"), il => new[] { il.Create(OpCodes.Ldarg_0), il.Create(OpCodes.Call, Hook("HmmRevive.Hooks", "HubStart")) });
+
+        // The lobby's car stats (mod/HmmRevive/CarStats.cs). Damage: float amount = ScaleDamage(mod.Amount, mod, causer)
+        var applyInstant = Target("HeavyMetalMachines.Combat.CombatController", "ApplyInstant");
+        var getAmount = applyInstant.Body.Instructions.First(i => i.Operand is MethodReference mr && mr.Name == "get_Amount" && mr.DeclaringType.Name == "ModifierInstance");
+        var ail = applyInstant.Body.GetILProcessor();
+        ail.InsertAfter(getAmount, ail.Create(OpCodes.Call, Hook("HmmRevive.Hooks", "ScaleDamage")));
+        ail.InsertAfter(getAmount, ail.Create(OpCodes.Ldarg_2));
+        ail.InsertAfter(getAmount, ail.Create(OpCodes.Ldarg_1));
+        Console.WriteLine("  transform -> CombatController::ApplyInstant mod.Amount -> Hooks.ScaleDamage");
+        // HP: in CombatData.HPMax, "+ _levelHPMax" -> "+ LevelHpMax(_levelHPMax, this)"
+        var hpMax = Target("HeavyMetalMachines.Combat.CombatData", "get_HPMax");
+        var levelHp = hpMax.Body.Instructions.Single(i => i.OpCode == OpCodes.Ldfld && i.Operand is FieldReference fr && fr.Name == "_levelHPMax");
+        var hil = hpMax.Body.GetILProcessor();
+        hil.InsertAfter(levelHp, hil.Create(OpCodes.Call, Hook("HmmRevive.Hooks", "LevelHpMax")));
+        hil.InsertAfter(levelHp, hil.Create(OpCodes.Ldarg_0));
+        Console.WriteLine("  transform -> CombatData::get_HPMax _levelHPMax -> Hooks.LevelHpMax");
+        // Move: at "this._lastAccel = accel", accel = ScaleAcceleration(accel, this); the force below uses the same local.
+        var moveFu = Target("HeavyMetalMachines.Car.CarMovement", "MovementFixedUpdate");
+        var storeAccel = moveFu.Body.Instructions.Single(i => i.OpCode == OpCodes.Stfld && i.Operand is FieldReference fr && fr.Name == "_lastAccel");
+        var loadAccel = storeAccel.Previous;
+        var accel = loadAccel.OpCode == OpCodes.Ldloc_S || loadAccel.OpCode == OpCodes.Ldloc ? (VariableDefinition)loadAccel.Operand
+            : loadAccel.OpCode == OpCodes.Ldloc_0 ? moveFu.Body.Variables[0] : loadAccel.OpCode == OpCodes.Ldloc_1 ? moveFu.Body.Variables[1]
+            : loadAccel.OpCode == OpCodes.Ldloc_2 ? moveFu.Body.Variables[2] : loadAccel.OpCode == OpCodes.Ldloc_3 ? moveFu.Body.Variables[3]
+            : throw new InvalidOperationException("CarMovement.MovementFixedUpdate: _lastAccel isn't stored from a local");
+        if (loadAccel.Previous.OpCode != OpCodes.Ldarg_0) throw new InvalidOperationException("CarMovement.MovementFixedUpdate: unexpected _lastAccel store");
+        var mil = moveFu.Body.GetILProcessor();
+        foreach (var ins in new[] { mil.Create(OpCodes.Ldloc, accel), mil.Create(OpCodes.Ldarg_0),
+                     mil.Create(OpCodes.Call, Hook("HmmRevive.Hooks", "ScaleAcceleration")), mil.Create(OpCodes.Stloc, accel) })
+            mil.InsertBefore(loadAccel, ins); // after "ldarg.0": a branch lands on that one
+        Console.WriteLine("  transform -> CarMovement::MovementFixedUpdate accel -> Hooks.ScaleAcceleration");
         Prologue(Target("HeavyMetalMachines.Frontend.HudWindowManager", "GameState_ListenToStateChanged"), il => new[] { il.Create(OpCodes.Ldarg_0), il.Create(OpCodes.Call, Hook("HmmRevive.Hooks", "HudStateChanged")) });
 
         SkipIf(Target("HeavyMetalMachines.Windows.WindowsPlatform", "CheckSingleApplicationInstance"), Hook("HmmRevive.Hooks", "SkipSingleInstanceCheck"), OpCodes.Ldc_I4_1);
@@ -229,6 +259,16 @@ static class Program
             il.Create(OpCodes.Ldarg_1),
             il.Create(OpCodes.Call, Hook("HmmRevive.Hooks", "BotDifficulty")),
             il.Create(OpCodes.Ret),
+        });
+
+        // The lobby's ability cooldowns for scripted gadgets (mod/HmmRevive/Cooldowns.cs): baseCooldown = ScriptCooldown(baseCooldown, context)
+        var cooldown = Target("HeavyMetalMachines.Combat.GadgetScript.Block.StartCooldownBlock", "GetCooldown");
+        Prologue(cooldown, il => new[]
+        {
+            il.Create(OpCodes.Ldarg_0),
+            il.Create(OpCodes.Ldarg_1),
+            il.Create(OpCodes.Call, Hook("HmmRevive.Hooks", "ScriptCooldown")),
+            il.Create(OpCodes.Starg_S, cooldown.Parameters[0]),
         });
 
         var lazy = Target("Zenject.LazyInstanceInjector", "LazyInjectAll");
